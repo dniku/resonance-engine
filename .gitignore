@@ -1,0 +1,10 @@
+# Nix out-links created by gcroots.nix (large, machine-local).
+.gc-roots/
+result
+result-*
+
+# Scratch debugging scripts kept out of the suite.
+.scratch/
+
+# Bytecode from serve.py and its tests.
+__pycache__/

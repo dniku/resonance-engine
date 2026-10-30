@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#05060c">
+<title>Resonance Engine — conduct a field of coupled oscillators</title>
+<!--
+  THIS IS NOT A PAGE. It is the markup that tools/build-standalone.mjs compiles
+  into `index.html` at the root of this repo -- which is the file to open.
+
+  Opened on its own this looks broken rather than unfinished: its stylesheet and
+  module are relative paths that resolve to nothing from here, so it paints
+  unstyled controls around a dead canvas and logs no error at all. A preview pane
+  that follows a link to any *.html makes that mistake silently, which is why the
+  name carries "template" and why a visible notice is emitted below.
+-->
+<meta name="description" content="A toroidal field of coupled oscillators that synchronises into waves and plays what it does.">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<!--
+  Visible only when opened directly, which is the interesting case. styles.css
+  hides it with a `display:none` rule; if that stylesheet has not loaded then
+  neither has the rule, so the notice shows. No script involved, so it works
+  before and entirely independently of the engine -- and the built page inlines
+  the stylesheet, where the rule takes effect and removes it without a trace.
+-->
+<p class="not-a-page">
+  <strong>This is the markup template, not the page.</strong>
+  Open <code>index.html</code> in the root of the repository instead: it is
+  generated from this file, with the stylesheet and engine inlined.
+</p>
+<div id="app">
+  <header role="banner">
+    <h1>Resonance <span>Engine</span></h1>
+    <button id="b-audio" class="primary">Enable audio</button>
+    <button id="b-panel" aria-expanded="true" aria-controls="panel">Hide</button>
+  </header>
+
+  <main>
+    <div id="stage" role="main" aria-label="Oscillator field">
+      <canvas id="field" width="84" height="56" role="img" aria-label="Field of 4,704 coupled oscillators. Bright areas are cells recently set in motion; the pattern drifts and organises on its own. Drag to conduct waves and play notes."></canvas>
+      <div id="pulses" aria-hidden="true"></div>
+      <output id="note-readout" aria-live="polite" aria-atomic="true"><span id="v-note">—</span></output>
+      <!--
+        The field itself is a canvas and cannot be explored, so the state panel
+        is announced instead. Updated at a tenth of the frame rate on purpose:
+        at 60 Hz a live region is unreadable noise, which is worse than nothing.
+      -->
+      <p id="sr-state" class="sr-only" role="status" aria-live="polite"></p>
+      <div id="intro" role="dialog" aria-labelledby="intro-title" aria-describedby="intro-body">
+        <h2 id="intro-title">What you are looking at</h2>
+        <p id="intro-body">
+          4,704 little metronomes, each swinging at its own speed and tuned by
+          position — low on the left, high on the right. Each one nudges its four
+          neighbours, so a disturbance you make spreads outward as a wave.
+          <strong>Bright means recently set in motion.</strong>
+        </p>
+        <p>
+          <strong>Drag anywhere.</strong> You will paint a bright trail and hear
+          notes; higher up the screen is higher pitch. Try
+          <strong>Burst</strong> to set every cell going at once.
+        </p>
+        <p class="intro-note">
+          The <em>Order</em> figure stays near zero and that is correct — the grid
+          spans many pitches, so it organises into local waves rather than one
+          unison. <em>Local order</em> is the number that responds to Coupling.
+        </p>
+        <button id="b-intro" class="primary">Start playing</button>
+      </div>
+      <div id="hints">
+        <p id="audio-hint">Tap <strong>Enable audio</strong> — browsers require a gesture before sound.</p>
+        <p id="touch-hint" hidden>Drag to conduct · tap <strong>Hide</strong> for a full-size field</p>
+      </div>
+    </div>
+
+    <aside id="panel" data-collapsed="false" aria-label="Controls">
+      <section>
+        <h2>Transport</h2>
+        <div class="buttons">
+          <button id="b-play">Pause</button>
+          <button id="b-burst">Burst</button>
+          <button id="b-clear">Silence</button>
+          <button id="b-seed">Reseed</button>
+          <button id="b-mutate">Mutate</button>
+          <button id="b-reset">Reset</button>
+        </div>
+        <label>Tempo <output id="v-c-tempo"></output>
+          <input id="c-tempo" type="range" min="40" max="200" step="1" value="100">
+        </label>
+        <label>Time <output id="v-c-speed"></output>
+          <input id="c-speed" type="range" min="0.05" max="3" step="0.05" value="1">
+        </label>
+      </section>
+
+      <section>
+        <h2>Physics</h2>
+        <label>Coupling <output id="v-c-coupling"></output>
+          <input id="c-coupling" type="range" min="0" max="40" step="0.5" value="12">
+        </label>
+        <label>Noise <output id="v-c-noise"></output>
+          <input id="c-noise" type="range" min="0" max="0.4" step="0.005" value="0.05">
+        </label>
+        <p class="hint">Coupling is the interesting dial: at 0 the grid is chaos, mid-range it forms travelling waves and spirals. Each column is tuned to a different pitch, so neighbouring columns can agree without the whole grid ever unifying — watch the waves glow, not the Order number.</p>
+      </section>
+
+      <section>
+        <h2>Tuning</h2>
+        <label>Scale
+          <select id="c-scale"></select>
+        </label>
+        <label>Root
+          <select id="c-root"></select>
+        </label>
+        <label>Spread (octaves) <output id="v-c-octaves"></output>
+          <input id="c-octaves" type="range" min="1" max="6" step="0.5" value="3">
+        </label>
+        <label>Frequency map
+          <select id="c-map"></select>
+        </label>
+        <label>Pitch from pointer
+          <select id="c-play"></select>
+        </label>
+      </section>
+
+      <section>
+        <h2>Look</h2>
+        <label>Palette
+          <select id="c-palette"></select>
+        </label>
+        <div class="toggles">
+          <label><input id="c-trails" type="checkbox"> Glow</label>
+          <label><input id="c-waveform" type="checkbox"> Pulse strip</label>
+        </div>
+      </section>
+
+      <section>
+        <h2>Sound</h2>
+        <label>Volume <output id="v-c-volume"></output>
+          <input id="c-volume" type="range" min="0" max="1" step="0.01" value="0.75">
+        </label>
+        <label>Space <output id="v-c-space"></output>
+          <input id="c-space" type="range" min="0" max="1" step="0.01" value="0.34">
+        </label>
+        <div class="toggles">
+          <label><input id="c-auto" type="checkbox"> Field sounds</label>
+          <label><input id="c-pointer" type="checkbox"> Pointer sounds</label>
+          <label><input id="c-selfhear" type="checkbox"> Self-hearing</label>
+        </div>
+      </section>
+
+      <section>
+        <h2>Field state</h2>
+        <dl class="stats">
+          <dt>Order <r title="Kuramoto order parameter for the whole grid: 1 = locked, 0 = incoherent. Stays near zero here by design — the grid spans many pitches, so it organises into local waves rather than global unison.">?</r></dt><dd id="v-order">–</dd>
+          <dt>Local order <r title="Synchrony within 7x7 neighbourhoods, averaged. This is the number coupling moves: the grid organises locally into waves and domains rather than as a whole.">?</r></dt><dd id="v-local">–</dd>
+          <dt>Activity <r title="Share of cells still carrying energy from being conducted. Zero at rest: it responds to dragging the field, not to time passing.">?</r></dt><dd id="v-activity">–</dd>
+          <dt>Voices</dt><dd id="v-voices">0</dd>
+          <dt>FPS</dt><dd id="v-fps">–</dd>
+          <dt>Seed</dt><dd id="v-seed">–</dd>
+          <dt>Spread</dt><dd id="v-spread">–</dd>
+          <dt>Scale</dt><dd id="v-scale">–</dd>
+          <dt>Root</dt><dd id="v-root">–</dd>
+        </dl>
+      </section>
+
+      <section id="help">
+        <h2>How to play</h2>
+        <ul>
+          <li><strong>Drag</strong> on the field to push waves through it.</li>
+          <li><strong>Drag with the button held</strong> to also sound notes along the pitch axis.</li>
+          <li><strong>Right-click drag</strong> to damp the field instead of exciting it.</li>
+          <li><strong>Home row <code>asdf…</code> / number row <code>q2w3e…</code></strong> play scale degrees.</li>
+          <li><kbd>Space</kbd> pause · <kbd>B</kbd> burst · <kbd>C</kbd> silence · <kbd>M</kbd> mutate · <kbd>N</kbd> reseed · <kbd>R</kbd> reset</li>
+        </ul>
+      </section>
+    </aside>
+  </main>
+</div>
+<script type="module" src="src/main.js"></script>
+</body>
+</html>
