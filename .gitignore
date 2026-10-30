@@ -6,5 +6,8 @@ result-*
 # Scratch debugging scripts kept out of the suite.
 .scratch/
 
+# esbuild's staging directory (tools/build-standalone.mjs).
+.tmp/
+
 # Bytecode from serve.py and its tests.
 __pycache__/
