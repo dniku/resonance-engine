@@ -1,5 +1,7 @@
 # Resonance Engine
 
+**[▶ Play it live](https://raw.githack.com/dniku/resonance-engine/master/index.html)**
+
 A toroidal field of 84×56 coupled oscillators that is also an instrument. The
 physics is genuine Kuramoto-style phase coupling, so the grid self-organises
 into travelling waves and spirals; the music is generated from the same
@@ -9,6 +11,15 @@ Conduct waves with the pointer, and the field composes the consequences: your
 playing competes with the autonomous part for a shared polyphony budget, and
 with *Self-hearing* on, every note you play biases the whole field's tempo
 toward itself, so the instrument partially tunes itself.
+
+![Four bright diagonal wave crests crossing a black field: narrow bands, white-hot at the
+centre and cooling through cyan to deep blue at the edges, running down and to the right and
+wrapping around the edges onto the other side.](tests/golden/firefox-wavefront.png)
+
+*A travelling wavefront, shortly after a Burst at high coupling. The picture is the
+`wavefront` golden frame the test suite pins, so this image is the thing under test. The
+`idle` and `locked` baselines are deliberately almost black — brightness maps local phase
+disagreement, and a field at rest, like a field in perfect unison, has very little of it.*
 
 ## What you are looking at
 
@@ -90,6 +101,29 @@ by accident, it prints a notice across the top when opened directly, and a test
 fails if any source `.html` is named like a page it cannot be.
 
 Click **Enable audio** — browsers require a user gesture before sound.
+
+### Live, from the repo
+
+**<https://raw.githack.com/dniku/resonance-engine/master/index.html>** runs the
+instrument straight out of this repo — no build, no hosting — which works only because
+the page is one file that asks for nothing else. That it really is this file is worth
+checking rather than taking on faith:
+
+```sh
+curl -s https://raw.githack.com/dniku/resonance-engine/master/index.html | sha256sum
+sha256sum index.html                    # same digest
+```
+
+Two things to expect. rawgithack puts a one-time **External Content Notice** in front of
+any HTML it proxies, with an *Open the page* button: the instrument is behind that click,
+and it remembers. And it caches for about a minute, so a fresh push takes a moment to
+appear — `rawcdn.githack.com` is the edge-cached mirror of the same path, and a commit
+SHA instead of `master` gives a link that cannot move. It is somebody else's server, so
+it is a demo path; the file in this repo is the artifact.
+
+`raw.githubusercontent.com` will not work: GitHub serves it as `text/plain` with
+`content-security-policy: default-src 'none'; sandbox`, so no script runs from it at all.
+Stripping that header is the whole job rawgithack exists to do.
 
 ## Controls
 
@@ -286,6 +320,11 @@ gesture.
   verified; audible output is **not**.
 - **Untested expectation:** that sound is correct and pleasant on real hardware,
   and that it mixes sensibly with the field's own output at high voice counts.
+- **Not verified: the rawgithack preview URL.** No network in this sandbox, so the
+  proxy was never fetched and its digest never compared against `index.html`. The URL is
+  constructed from the Flux Pond mechanism (`raw.githack.com/<owner>/<repo>/<ref>/<path>`,
+  note `master` here, not `main`); treat "Play it live" as untested until the `sha256sum`
+  comparison above is run somewhere with a network.
 
 - **Observed on phone viewports** (390×844 and 844×390, `hasTouch`/`isMobile`,
   Firefox): zero page errors; the field is never a sliver (368×373 portrait,
