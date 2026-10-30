@@ -165,3 +165,47 @@ test('mobile layout is defined in CSS, not left to the desktop grid', () => {
   assert.match(css, /env\(safe-area-inset-bottom\)/, 'must respect the notch and home indicator');
   assert.match(css, /--tap:\s*44px/, 'touch targets must be at least 44px');
 });
+
+test('every golden pose has a baseline for each baselined engine', () => {
+  // tests/golden is the source of truth for which engines are compared, and the
+  // browser suite derives its engine set from the same directory. Both sides of
+  // that agreement are asserted here, in the browser-free suite, because the
+  // failure it prevents is invisible where it happens: a hard-coded engine list
+  // that lags the directory turns real comparisons into silent skips. Observed
+  // with Chromium -- six baselines committed, the list still Firefox-only, and
+  // `BROWSERS=chromium` reported six "no baselines" skips while passing.
+  const files = readdirSync(`${root}tests/golden`, { withFileTypes: true })
+    .filter((entry) => entry.isFile() && entry.name.endsWith('.png'))
+    .map((entry) => entry.name);
+  assert.ok(files.length > 0, 'tests/golden holds no baselines at all');
+
+  const engines = new Set(files.map((name) => name.split('-')[0]));
+  const posesByEngine = new Map(
+    [...engines].map((engine) => [
+      engine,
+      new Set(files.filter((n) => n.startsWith(`${engine}-`)).map((n) => n.slice(engine.length + 1, -4))),
+    ]),
+  );
+
+  for (const engine of engines) {
+    for (const other of engines) {
+      if (engine === other) continue;
+      const missing = [...posesByEngine.get(other)].filter((pose) => !posesByEngine.get(engine).has(pose));
+      assert.deepEqual(
+        missing,
+        [],
+        `engine ${engine} is missing baselines that ${other} has: ${missing.join(', ')}. `
+        + 'Record them with BROWSERS=<engine> UPDATE=<pose>.',
+      );
+    }
+  }
+
+  // The suite must actually compare every engine it has images for, rather than
+  // listing engines by hand.
+  const browserTest = readFileSync(`${root}tests/browser.test.mjs`, 'utf8');
+  assert.doesNotMatch(
+    browserTest,
+    /const GOLDEN_ENGINES = new Set\(\s*\['/u,
+    'GOLDEN_ENGINES must be derived from tests/golden, not hard-coded',
+  );
+});

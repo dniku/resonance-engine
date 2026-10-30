@@ -3,22 +3,36 @@
 set -uo pipefail
 cd "$(dirname "$0")"
 
-DENO=${DENO:-$(command -v deno || echo /nix/store/q4f99ywwv55mlmqllaly912qi5jzf19g-deno-2.9.7/bin/deno)}
 STATUS=0
 
+# Deno does the type check and runs the unit suite. A hardcoded store path used
+# to sit here as a fallback, which worked on the machine that wrote it and named
+# a path no other machine has. `nix-shell shell.nix` puts deno on PATH, so it is
+# looked up rather than guessed; when it is absent phases 1-2 report a skip and
+# the run still exits non-zero rather than passing on nothing.
+DENO=${DENO:-$(command -v deno || true)}
+
 echo "== 1/3 type check =="
-"$DENO" check --no-lock --allow-import src/*.js \
-  && echo "types ok" || STATUS=1
+if [[ -n $DENO ]]; then
+  "$DENO" check --no-lock --allow-import src/*.js \
+    && echo "types ok" || STATUS=1
+else
+  echo "SKIP: deno unavailable"
+fi
 
 echo
 echo "== 2/3 unit + wiring tests =="
 # The wiring test shells out to the standalone build, so it needs what that
 # build needs: --allow-run for the esbuild spawn, --allow-env to read $ESBUILD,
 # --allow-write for the .tmp directory esbuild writes through.
-"$DENO" test --no-lock --no-check --allow-read --allow-env --allow-run \
-  --allow-write="$PWD/.tmp" \
-  tests/engine.test.js tests/wiring.test.mjs tests/png.test.mjs tests/serve.test.mjs \
-  || STATUS=1
+if [[ -n $DENO ]]; then
+  "$DENO" test --no-lock --no-check --allow-read --allow-env --allow-run \
+    --allow-write="$PWD/.tmp" \
+    tests/engine.test.js tests/wiring.test.mjs tests/png.test.mjs tests/serve.test.mjs \
+    || STATUS=1
+else
+  echo "SKIP: deno unavailable"
+fi
 
 echo
 echo "== 3/3 browser smoke test =="

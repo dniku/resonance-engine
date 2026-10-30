@@ -1,6 +1,6 @@
 # Resonance Engine
 
-**[▶ Play it live](https://raw.githack.com/dniku/resonance-engine/master/index.html)**
+**[▶ Play it live](https://raw.githack.com/dniku/resonance-engine/master/index.html) · [CI](https://github.com/dniku/resonance-engine/actions/workflows/ci.yml)**
 
 A toroidal field of 84×56 coupled oscillators that is also an instrument. The
 physics is genuine Kuramoto-style phase coupling, so the grid self-organises
@@ -225,10 +225,11 @@ Two decisions worth knowing:
 ./check.sh
 ```
 
-Runs three phases: `deno check` (types over all ten modules), 64 unit tests
+Runs three phases: `deno check` (types over all ten modules), 65 unit tests
 (physics, music, the HTML/JS boundary, the image comparator itself, and
 `serve.py`'s address resolution), and 48 Playwright browser checks including
-golden screenshots. Bootstrap the browser toolchain with:
+golden screenshots. Phases 1-2 need Deno on `PATH`, which `nix-shell shell.nix`
+provides; phases 3 need the browser toolchain:
 
 ```sh
 nix-build gcroots.nix -A pw       --out-link .gc-roots/pw
@@ -236,11 +237,53 @@ nix-build gcroots.nix -A browsers --out-link .gc-roots/browsers
 nix-build gcroots.nix -A node     --out-link .gc-roots/node
 ```
 
-`BROWSERS=chromium` / `BROWSERS=firefox` restricts the engine used.
+A phase whose toolchain is missing reports a skip and the run still exits
+non-zero, so a machine missing half the toolchain cannot print `ALL CHECKS
+PASSED`. It used to fall back to a hardcoded `/nix/store/<hash>-deno` path that
+existed only on the machine that wrote it.
+
+`BROWSERS=chromium` / `BROWSERS=firefox` restricts the engine. An unrecognised
+value is fatal rather than skipped: `BROWSERS=chromin` once ended the run with
+`0/0 browser checks passed` and exit 0, which is the most convincing possible
+false green.
+
+### Continuous integration
+
+`.github/workflows/ci.yml` runs the same checklist, not a second definition of
+it: one job for phases 1-2 and one per engine for phase 3. Two things it does
+not do, deliberately. It does not run `node --test`, because Node 22 reports
+each file on its command line as a single opaque subtest -- `node --test
+tests/engine.test.js` prints `# tests 1` for the 41 tests that file declares --
+so CI would count 4 where Deno counts 65 and stay green if 60 disappeared. And
+it does not treat a missing golden as a recording opportunity; see below.
+
+**CI has not run for this commit**: it was added after the last push, so its
+first execution is the push that lands it. Actions runners have never painted
+these pages, which means the goldens are recorded on this machine and compared
+on somebody else's. That is the known open risk; `PIXEL_TOLERANCE` exists for
+exactly this, and a runner that legitimately renders differently should raise
+the tolerance rather than the baselines.
 
 ### Golden screenshots
 
-`tests/golden/` holds six Firefox baselines: the `idle`, `wavefront` and
+`tests/golden/` holds twelve baselines: six for Firefox and six for Chromium,
+named `<engine>-<pose>.png`. The two engines cannot share a set -- overlapped,
+the same pose differs between them in 3.7% (`idle`) to 32% (`chrome`) of pixels
+-- and the suite derives which engines to compare from the directory contents,
+so committing a new engine's images makes it compared and deleting them stops,
+with no list to fall out of step. A wiring test asserts both halves of that.
+
+Which is a fix, not a feature: Chromium's six images were recorded while the
+engine list still said Firefox only, and `BROWSERS=chromium` reported six
+"no baselines" skips and passed. Six comparisons existed on disk and none ran.
+
+A second class of the same bug: a golden absent from the repo was treated the
+same as "recording was requested" -- the run drew a fresh baseline, reported
+`skip`, and exited 0. Moving `firefox-locked.png` away and running the suite
+printed `skip golden: locked (baseline)` and passed. An absent baseline is now
+an error; recording one takes `UPDATE=<pose>` deliberately.
+
+The original six Firefox baselines are the `idle`, `wavefront` and
 `locked` field poses plus `chrome` (the control panel), all captured at desktop
 size, and `phone-portrait` / `phone-landscape` at 390×844 and 844×390. Every
 pose is seeded with the clock stopped and one final paint, so an image has
@@ -286,9 +329,10 @@ ad-hoc debugging scripts and is not part of the suite.
 
 ### What was actually observed
 
-Run 2026-10-30 on this machine: `ALL CHECKS PASSED` — types clean, 64/64 unit +
+Run 2026-10-30 on this machine: `ALL CHECKS PASSED` — types clean, 65/65 unit +
 wiring + serve tests, and 47/48 browser checks in Firefox (1 skipped, below).
-Everything browser-level here is Firefox; see Limitations for why.
+Chromium was run separately, outside the sandbox, at 47/48 with its own six
+goldens compared; see Limitations for the difference between that and portable.
 
 Specifically observed in-browser: zero page errors on load; canvas populated
 (4704 lit pixels, many distinct colours, backing store equal to the grid);
@@ -400,12 +444,17 @@ behaviour instead of passing on the old.
 
 - Sound requires a working audio device; if one is missing the UI says so and
   continues visuals-only instead of hanging.
-- Chromium is untested: it cannot start in this sandbox at all (it calls
-  `socketpair()` during startup, before its own `--no-sandbox` applies, and the
-  seccomp filter denies it — `sandbox_host_linux.cc:41`, SIGTRAP). Firefox is the
-  verified engine, so the golden images are Firefox-specific and named
-  accordingly; expect them to differ on other GPUs and font stacks, which is why
-  comparison is tolerant rather than exact.
+- Chromium runs only outside the sandbox: unprivileged it dies during startup
+  (it calls `socketpair()` before its own `--no-sandbox` applies and the seccomp
+  filter denies it — `sandbox_host_linux.cc:41`, SIGTRAP). With that restriction
+  lifted it passes 47/48 including all six of its own goldens, so it is a
+  verified second engine rather than an aspirational one. Firefox remains the
+  engine `./check.sh` runs by default because that is the one that needs no
+  escalation.
+- Both engines' goldens were recorded and compared on this machine. They have
+  never been painted by a different GPU, font stack, or by an Actions runner at
+  all, which is the difference between "deterministic here" and "portable". The
+  2% tolerance is the hedge; it has not been tested against reality.
 - Coupling is nearest-neighbour on a 2-torus, so the field organises into waves
   rather than the near-1.0 global locking of an all-to-all network. That is the
   physics, not a shortfall; the tests assert against the disordered baseline.

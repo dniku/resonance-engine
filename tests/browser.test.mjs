@@ -11,7 +11,7 @@
 import assert from 'node:assert/strict';
 import { decodePng, differenceRatio } from './png.mjs';
 import { createRequire } from 'node:module';
-import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import process from 'node:process';
 
@@ -23,9 +23,26 @@ const ENGINES = (process.env.BROWSERS ?? 'chromium,firefox')
   .split(',')
   .map((name) => name.trim())
   .filter(Boolean);
-
 const ORIGIN = 'http://resonance.test';
 const GOLDEN_DIR = new URL('../tests/golden/', import.meta.url).pathname;
+/**
+ * The engines that own baselines in `tests/golden/`, which is decided by what
+ * is committed there rather than written down twice. Images are named
+ * `<engine>-<pose>.png`, and the two engines render differently enough that
+ * sharing one set of images would be meaningless: Firefox and Chromium differ
+ * on font antialiasing and canvas rasterisation, so each is pinned to its own.
+ *
+ * Derived from disk so that recording a new engine (`BROWSERS=<engine>
+ * UPDATE=1 node tests/browser.test.mjs`) makes it a compared engine
+ * immediately, and deleting every image for an engine stops comparing it
+ * without leaving a stale list claiming otherwise.
+ */
+const GOLDEN_ENGINES = new Set(
+  readdirSync(GOLDEN_DIR, { withFileTypes: true })
+    .filter((entry) => entry.isFile() && entry.name.endsWith('.png'))
+    .map((entry) => entry.name.split('-')[0]),
+);
+
 /**
  * Golden images are compared with a tolerance, not byte-for-byte: rendering
  * legitimately varies with GPU, font antialiasing and subpixel timing, so a
@@ -139,13 +156,49 @@ async function freezePose(page, pose) {
 async function assertGolden(page, name, options) {
   const shot = await page.screenshot({ ...options, animations: 'disabled' });
   const goldenPath = `${GOLDEN_DIR}${name}.png`;
-  if (shouldUpdate(name) || !existsSync(goldenPath)) {
+  const exists = existsSync(goldenPath);
+  if (shouldUpdate(name) || !exists) {
     mkdirSync(GOLDEN_DIR, { recursive: true });
     writeFileSync(goldenPath, shot);
-    return { created: true };
+    // `recorded` says the caller asked for this. `!exists && !recorded` is a
+    // baseline that vanished, and must not pass: see the guard below.
+    return { created: !exists, recorded: shouldUpdate(name) };
   }
   const ratio = differenceRatio(decodePng(shot), decodePng(readFileSync(goldenPath)));
-  return { created: false, ratio };
+  return { created: false, recorded: false, ratio };
+}
+
+/**
+ * A baseline that is absent from the repo is a failure, not a skip. The first
+ * version of this harness treated "no golden yet" the same as "recording was
+ * requested": delete or forget to commit one image and the run re-recorded it
+ * and reported `skip`, so the suite passed while guarding nothing. Observed
+ * directly -- moving `firefox-locked.png` away produced `skip golden: locked
+ * (baseline)` and exit 0, and the freshly drawn image passed the other checks
+ * only because rendering happens to be deterministic here.
+ */
+function requireGolden(result, name) {
+  if (result.created && !result.recorded) {
+    throw new Error(
+      `no golden image for ${name}: it is absent from tests/golden, so this run re-recorded `
+      + 'one and cannot compare against anything. Restore it from git, or if the change is '
+      + 'intended record it deliberately with UPDATE=<pose>.',
+    );
+  }
+  if (result.created) {
+    report(`golden: ${name} (recorded)`, 'skip', 'baseline was named in UPDATE; written, not compared');
+    return;
+  }
+}
+
+/**
+ * Run one golden check, or report why it cannot run on this engine. Keeps the
+ * engine-without-baselines case out of the body of every check.
+ */
+function goldenCheck(goldenEngine, label, fn) {
+  if (goldenEngine) return check(label, fn);
+  report(label, 'skip', 'this engine has no baselines in tests/golden; record with BROWSERS=<engine> UPDATE=1');
+  return Promise.resolve();
 }
 
 const GOLDEN_VIEWPORT = { width: 1280, height: 820 };
@@ -178,12 +231,16 @@ let exitCode = 0;
 
 try {
   const available = { chromium, firefox };
+  // A name that is not an engine is a typo in BROWSERS, and skipping it would
+  // end the run having asserted nothing at all -- 0/0 passed, exit 0, green.
+  const unknown = ENGINES.filter((name) => !available[name]);
+  if (unknown.length > 0) {
+    throw new Error(
+      `unknown engine(s): ${unknown.join(', ')}. Available: ${Object.keys(available).join(', ')}.`,
+    );
+  }
   for (const name of ENGINES) {
     const type = available[name];
-    if (!type) {
-      console.log(`skip ${name}: unknown engine`);
-      continue;
-    }
     let browser;
     try {
       browser = await type.launch({ args: ['--no-sandbox', '--autoplay-policy=no-user-gesture-required'] });
@@ -673,15 +730,12 @@ try {
     ];
 
     for (const [pose, purpose] of poses) {
-      await check(`golden: ${pose} (${purpose})`, async () => {
+      await goldenCheck(GOLDEN_ENGINES.has(name), `golden: ${pose} (${purpose})`, async () => {
         await freezePose(driver, pose);
         const result = await assertGolden(driver, `${name}-${pose}`, {
           clip: await driver.locator('#field').boundingBox(),
         });
-        if (result.created) {
-          report(`golden: ${pose} (baseline)`, 'skip', 'no golden image yet; wrote the baseline');
-          return;
-        }
+        requireGolden(result, pose);
         assert.ok(
           result.ratio <= PIXEL_TOLERANCE,
           `${pose} differs from its golden image in ${(result.ratio * 100).toFixed(2)}% of pixels `
@@ -690,15 +744,12 @@ try {
       });
     }
 
-    await check('golden: chrome (control panel renders, incl. the Root select)', async () => {
+    await goldenCheck(GOLDEN_ENGINES.has(name), 'golden: chrome (control panel renders, incl. the Root select)', async () => {
       await freezePose(driver, 'chrome');
       const result = await assertGolden(driver, `${name}-chrome`, {
         clip: await driver.locator('#panel').boundingBox(),
       });
-      if (result.created) {
-        report('golden: chrome (baseline)', 'skip', 'no golden image yet; wrote the baseline');
-        return;
-      }
+      requireGolden(result, 'chrome');
       assert.ok(
         result.ratio <= PIXEL_TOLERANCE,
         `panel differs from its golden image in ${(result.ratio * 100).toFixed(2)}% of pixels`,
@@ -711,16 +762,13 @@ try {
     // get a fresh page, a seeded pose and one paint, and so have one correct
     // image.
     for (const [label, options] of [['portrait', PHONE_PORTRAIT], ['landscape', PHONE_LANDSCAPE]]) {
-      await check(`golden: phone ${label} (untouched layout a visitor first sees)`, async () => {
+      await goldenCheck(GOLDEN_ENGINES.has(name), `golden: phone ${label} (untouched layout a visitor first sees)`, async () => {
         const { page: fresh, context: freshContext } = await openPage(browser, options);
         openedContexts.push(freshContext);
         await fresh.waitForFunction(() => window.__resonance !== undefined, null, { timeout: 5000 });
         await freezePose(fresh, 'idle');
         const result = await assertGolden(fresh, `${name}-phone-${label}`);
-        if (result.created) {
-          report(`golden: phone ${label} (baseline)`, 'skip', 'no golden image yet; wrote the baseline');
-          return;
-        }
+        requireGolden(result, `phone-${label}`);
         assert.ok(
           result.ratio <= PIXEL_TOLERANCE,
           `phone ${label} differs from its golden image in ${(result.ratio * 100).toFixed(2)}% of pixels `
