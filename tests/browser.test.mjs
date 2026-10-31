@@ -157,15 +157,20 @@ async function assertGolden(page, name, options) {
   const shot = await page.screenshot({ ...options, animations: 'disabled' });
   const goldenPath = `${GOLDEN_DIR}${name}.png`;
   const exists = existsSync(goldenPath);
-  if (shouldUpdate(name) || !exists) {
+  const recorded = shouldUpdate(name);
+  if (recorded || !exists) {
     mkdirSync(GOLDEN_DIR, { recursive: true });
     writeFileSync(goldenPath, shot);
-    // `recorded` says the caller asked for this. `!exists && !recorded` is a
-    // baseline that vanished, and must not pass: see the guard below.
-    return { created: !exists, recorded: shouldUpdate(name) };
+    // Two different things, and conflating them was a bug: `recorded` means the
+    // caller asked for a new baseline, `existed` says whether one was there
+    // first. A baseline that was absent and not asked for has vanished from the
+    // repo and must not pass (see requireGolden). `ratio` is deliberately absent
+    // rather than zero here -- comparing a file you just overwrote is always 0
+    // and proves nothing, so there is no ratio to report.
+    return { recorded, existed: exists };
   }
   const ratio = differenceRatio(decodePng(shot), decodePng(readFileSync(goldenPath)));
-  return { created: false, recorded: false, ratio };
+  return { recorded: false, existed: true, ratio };
 }
 
 /**
@@ -178,16 +183,12 @@ async function assertGolden(page, name, options) {
  * only because rendering happens to be deterministic here.
  */
 function requireGolden(result, name) {
-  if (result.created && !result.recorded) {
+  if (!result.recorded && !result.existed) {
     throw new Error(
       `no golden image for ${name}: it is absent from tests/golden, so this run re-recorded `
       + 'one and cannot compare against anything. Restore it from git, or if the change is '
       + 'intended record it deliberately with UPDATE=<pose>.',
     );
-  }
-  if (result.created) {
-    report(`golden: ${name} (recorded)`, 'skip', 'baseline was named in UPDATE; written, not compared');
-    return;
   }
 }
 
@@ -736,6 +737,10 @@ try {
           clip: await driver.locator('#field').boundingBox(),
         });
         requireGolden(result, pose);
+        if (result.recorded) {
+          report(`golden: ${pose} (recorded)`, 'skip', 'named in UPDATE; written, not compared');
+          return;
+        }
         assert.ok(
           result.ratio <= PIXEL_TOLERANCE,
           `${pose} differs from its golden image in ${(result.ratio * 100).toFixed(2)}% of pixels `
@@ -750,6 +755,10 @@ try {
         clip: await driver.locator('#panel').boundingBox(),
       });
       requireGolden(result, 'chrome');
+      if (result.recorded) {
+        report('golden: chrome (recorded)', 'skip', 'named in UPDATE; written, not compared');
+        return;
+      }
       assert.ok(
         result.ratio <= PIXEL_TOLERANCE,
         `panel differs from its golden image in ${(result.ratio * 100).toFixed(2)}% of pixels`,
@@ -769,6 +778,10 @@ try {
         await freezePose(fresh, 'idle');
         const result = await assertGolden(fresh, `${name}-phone-${label}`);
         requireGolden(result, `phone-${label}`);
+        if (result.recorded) {
+          report(`golden: phone ${label} (recorded)`, 'skip', 'named in UPDATE; written, not compared');
+          return;
+        }
         assert.ok(
           result.ratio <= PIXEL_TOLERANCE,
           `phone ${label} differs from its golden image in ${(result.ratio * 100).toFixed(2)}% of pixels `
@@ -905,6 +918,19 @@ try {
 const passed = results.filter(([, status]) => status === 'ok').length;
 const skipped = results.filter(([, status]) => status === 'skip');
 const failed = results.filter(([, status]) => status === 'fail');
+/*
+ * Nothing ran is not the same as everything passed, and the two used to be
+ * indistinguishable: if every engine failed to launch, each was reported as a
+ * skip and `0/0 browser checks passed` exited 0. Observed by running the suite
+ * inside a shell whose Playwright browsers revision did not match the driver --
+ * a clean CI machine could have gone green having painted nothing.
+ */
+if (results.length === 0) {
+  console.error('\nFAIL: no browser check ran. Every engine failed to launch, '
+    + 'so the suite verified nothing. Check that PLAYWRIGHT_BROWSERS_PATH matches '
+    + 'the Playwright driver version.');
+  process.exit(1);
+}
 console.log(`\n${passed}/${results.length} browser checks passed`);
 if (skipped.length) console.log(`skipped: ${skipped.map(([n, , ]) => n).join(', ')}`);
 if (failed.length) {
