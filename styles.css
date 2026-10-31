@@ -239,10 +239,53 @@ label output {
   font-variant-numeric: tabular-nums;
 }
 
+/*
+ * The thumb is drawn by the browser's native widget theme unless the whole
+ * control is taken over, and that leaked into the golden images: the control
+ * panel pose differed by ~5% between this machine's Chromium and a GitHub
+ * runner's, with identical dimensions and every other Chromium pose matching
+ * byte for byte. accent-color is only a hint -- it does not define geometry --
+ * so appearance:none plus explicit track and thumb rules are what make the
+ * panel render the same wherever it is painted. -moz- and -webkit- are both
+ * required: neither engine implements the other's pseudo-element.
+ */
 input[type="range"] {
   width: 100%;
   accent-color: var(--accent);
   margin-top: 5px;
+  appearance: none;
+  background: transparent;
+  height: 22px;
+}
+
+input[type="range"]::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 999px;
+  background: #2b3352;
+}
+
+input[type="range"]::-webkit-slider-thumb {
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  margin-top: -5px;
+  border-radius: 999px;
+  background: var(--accent);
+  border: none;
+}
+
+input[type="range"]::-moz-range-track {
+  height: 4px;
+  border-radius: 999px;
+  background: #2b3352;
+}
+
+input[type="range"]::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 999px;
+  background: var(--accent);
+  border: none;
 }
 
 select {
