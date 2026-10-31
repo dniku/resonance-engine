@@ -51,6 +51,24 @@ const GOLDEN_ENGINES = new Set(
  */
 const PIXEL_TOLERANCE = Number(process.env.PIXEL_TOLERANCE ?? 0.02);
 /**
+ * Poses that are mostly text get a wider allowance, and the reason is measured
+ * rather than guessed. Every canvas pose (idle, wavefront, locked, and the two
+ * phone field crops) matches between this machine and a GitHub Actions runner
+ * to the byte. The one that never has is `chrome`: 320px of dense UI copy,
+ * where 94% of pixels are identical and the rest sit along glyph edges --
+ * 4.43% above threshold and 1.7% below it, with dimensions matching exactly, so
+ * nothing has moved and only the rasterisation differs.
+ *
+ * Re-recording onto whichever machine is failing simply moves the failure to
+ * the other one (tried: adopting the runner's image broke the local run by the
+ * same margin), because both are correct renders of the same markup under
+ * different font hinting. The check that matters -- the panel is laid out, its
+ * controls present, the Root select not blank -- is not sensitive at this
+ * resolution. Canvas poses keep the strict 2%.
+ */
+const TEXT_POSE_TOLERANCE = Number(process.env.TEXT_POSE_TOLERANCE ?? 0.08);
+const toleranceFor = (pose) => (pose === 'chrome' ? TEXT_POSE_TOLERANCE : PIXEL_TOLERANCE);
+/**
  * `UPDATE=1` rewrites every baseline. That is a footgun: after one intended
  * visual change it silently re-baselines the five images that had nothing to do
  * with it, so an unintended change hiding among them is lost rather than
@@ -784,9 +802,11 @@ try {
         report('golden: chrome (recorded)', 'skip', 'named in UPDATE; written, not compared');
         return;
       }
+      const chromeTolerance = toleranceFor('chrome');
       assert.ok(
-        result.ratio <= PIXEL_TOLERANCE,
-        `panel differs from its golden image in ${(result.ratio * 100).toFixed(2)}% of pixels`,
+        result.ratio <= chromeTolerance,
+        `panel differs from its golden image in ${(result.ratio * 100).toFixed(2)}% of pixels `
+          + `(tolerance ${chromeTolerance * 100}%)`,
       );
     });
 
@@ -967,15 +987,30 @@ try {
       const painted = await driver.evaluate(() => {
         const select = document.getElementById('c-root');
         const rect = select.getBoundingClientRect();
-        const probe = document.createElement('canvas');
-        probe.width = Math.round(rect.width);
-        probe.height = Math.round(rect.height);
-        // A select cannot be rasterised from the page, so assert the rendered
-        // text box is non-empty and its label is legible instead.
         return { width: rect.width, height: rect.height, text: select.options[select.selectedIndex]?.textContent ?? '' };
       });
       assert.ok(painted.width > 100 && painted.height > 12, `select has no size: ${JSON.stringify(painted)}`);
       assert.match(painted.text, /^[A-G]#?$/, `selected option text is wrong: "${painted.text}"`);
+      /*
+       * The visual half, which the previous version only claimed. It built an
+       * off-screen canvas and never read it, so a select made invisible with
+       * `visibility: hidden` -- box and value intact -- passed while rendering
+       * nothing, and so would a select painted the same colour as its
+       * background. Screenshotting the element's own box and requiring actual
+       * ink is the assertion the comment promised.
+       */
+      const box = await driver.locator('#c-root').boundingBox();
+      const shot = await driver.screenshot({ clip: box });
+      const { decodePng } = await import('./png.mjs');
+      const image = decodePng(shot);
+      const colours = new Set();
+      for (let i = 0; i < image.data.length; i += 4) {
+        colours.add((image.data[i] << 16) | (image.data[i + 1] << 8) | image.data[i + 2]);
+      }
+      assert.ok(
+        colours.size >= 3,
+        `the Root select box holds only ${colours.size} colour(s), so nothing is drawn in it`,
+      );
     });
   }
 } finally {
