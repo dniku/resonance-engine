@@ -63,6 +63,12 @@ jobs:
           nix-build gcroots.nix -A pw --out-link .gc-roots/pw
           nix-build gcroots.nix -A browsers --out-link .gc-roots/browsers
           nix-build gcroots.nix -A node --out-link .gc-roots/node
+      # esbuild needs no step of its own: shell.nix provides it and the next step
+      # runs inside that shell. It used to be found by globbing /nix/store for an
+      # esbuild already present, so CI failed on a clean runner with "esbuild not
+      # found" while passing on the machine that wrote it -- the same failure as a
+      # hardcoded store path, by another route.
+      #
       # check.sh rather than a hand-rolled invocation: the out-link paths and
       # PLAYWRIGHT_BROWSERS_PATH are already its business, and repeating them
       # lets CI and a local run drift apart. A phase whose toolchain is missing

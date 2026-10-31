@@ -6,6 +6,7 @@ pkgs.mkShellNoCC {
   packages = [
     pkgs.nodejs_22
     pkgs.deno          # `deno check` and the test runner; check.sh needs it on PATH
+    pkgs.esbuild       # tools/build-standalone.mjs spawns this CLI to bundle
     pkgs.playwright-driver
     pkgs.firefox
     pkgs.python3
