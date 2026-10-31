@@ -222,14 +222,17 @@ Two decisions worth knowing:
 ## Checks
 
 ```sh
-./check.sh
+nix-shell shell.nix --run ./check.sh
 ```
 
 Runs three phases: `deno check` (types over all ten modules), 65 unit tests
 (physics, music, the HTML/JS boundary, the image comparator itself, and
 `serve.py`'s address resolution), and 48 Playwright browser checks including
-golden screenshots. Phases 1-2 need Deno on `PATH`, which `nix-shell shell.nix`
-provides; phases 3 need the browser toolchain:
+golden screenshots.
+
+The shell is what puts `deno` on `PATH`; a bare `./check.sh` outside it prints
+which tool is missing and how to get it. Phase 3 additionally needs the browser
+toolchain:
 
 ```sh
 nix-build gcroots.nix -A pw       --out-link .gc-roots/pw
@@ -237,10 +240,12 @@ nix-build gcroots.nix -A browsers --out-link .gc-roots/browsers
 nix-build gcroots.nix -A node     --out-link .gc-roots/node
 ```
 
-A phase whose toolchain is missing reports a skip and the run still exits
-non-zero, so a machine missing half the toolchain cannot print `ALL CHECKS
-PASSED`. It used to fall back to a hardcoded `/nix/store/<hash>-deno` path that
-existed only on the machine that wrote it.
+A phase that cannot run **fails** the run rather than skipping it, so
+`ALL CHECKS PASSED` means every phase actually executed. Both halves of that
+were bugs: with Deno off `PATH` and the browser out-links absent, `check.sh`
+printed `ALL CHECKS PASSED` and exited 0 having run zero tests. Deno itself was
+found through a hardcoded `/nix/store/<hash>-deno` path that existed on no other
+machine.
 
 `BROWSERS=chromium` / `BROWSERS=firefox` restricts the engine. An unrecognised
 value is fatal rather than skipped: `BROWSERS=chromin` once ended the run with
