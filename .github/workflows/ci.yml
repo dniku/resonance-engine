@@ -1,12 +1,12 @@
 name: CI
 
-# Runs the acceptance checklist the project already defines. Nothing is
-# re-implemented here: the browser-free job runs phases 1 and 2 of check.sh, the
-# browser job runs all three with one engine each, so "green here" and "green at
-# home" are the same claim.
+# One job per engine, each running check.sh end to end -- types, the 65 unit and
+# wiring tests, and the painted page with that engine's golden frames. There is
+# deliberately no second definition of the acceptance checklist here: if the two
+# disagree, CI proves something other than what a contributor sees.
 #
-# Nix supplies node, Deno, Playwright and Firefox; there is no setup-node and no
-# npm install because the project has no Node dependencies -- the modules import
+# Nix supplies node, Deno, Playwright and Firefox. There is no setup-node and no
+# npm install because the project has no Node dependencies: the modules import
 # each other and `node:*` only.
 
 on:
@@ -23,56 +23,32 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # Phases 1-2: `deno check` over the modules, then the unit, wiring, PNG
-  # comparator and serve.py tests. Fails on a stale index.html, a control id
-  # app.js does not know, a corrupted golden, or a comparator that cannot see a
-  # one-pixel change.
   checks:
-    name: Types, unit and wiring tests
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v4
-      - uses: cachix/install-nix-action@v30
-      - run: nix-shell shell.nix --run 'deno --version && node --version'
-      - name: Type check
-        run: nix-shell shell.nix --run 'deno check --no-lock --allow-import src/*.js'
-      # Deno, not `node --test`, because the two do not count the same tests.
-      # Node 22 runs each file given on its command line as one opaque subtest:
-      # `node --test tests/engine.test.js` reports `1..1` / `# tests 1` for the
-      # 41 tests that file declares, and bare `node --test` reports 5 for all
-      # four files. A CI step written that way would print "4 passed" while
-      # running 64 and, worse, stay green if 60 of them vanished. Deno reports
-      # every test individually, and it is what check.sh uses, so CI and a local
-      # run count identically.
-      - name: Unit and wiring tests
-        run: nix-shell shell.nix --run 'deno test --no-lock --no-check --allow-read --allow-env --allow-run --allow-write=$PWD/.tmp tests/engine.test.js tests/wiring.test.mjs tests/png.test.mjs tests/serve.test.mjs'
-
-  # Phase 3, once per engine. Both own baselines in tests/golden and they cannot
-  # share: the same pose overlapped differs between them in 3.7% to 32% of
-  # pixels, so one image set would compare nothing. BROWSERS is honoured by the
-  # suite, and an unrecognised value is fatal rather than a silent 0/0 pass.
-  browser:
-    name: Painted page (${{ matrix.browsers }})
+    name: Checks (${{ matrix.browsers }})
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     strategy:
+      # Both engines own baselines in tests/golden and they cannot share them:
+      # overlapped, the same pose differs between the two in 3.7% (idle) to 32%
+      # (chrome) of pixels, so a shared image set would compare nothing.
       fail-fast: false
       matrix:
         browsers: [firefox, chromium]
     steps:
       - uses: actions/checkout@v4
       - uses: cachix/install-nix-action@v30
-      - name: Bootstrap the browser toolchain
+      - name: Bootstrap the browser out-links check.sh looks for
         run: |
           mkdir -p .gc-roots
           nix-build gcroots.nix -A pw --out-link .gc-roots/pw
           nix-build gcroots.nix -A browsers --out-link .gc-roots/browsers
           nix-build gcroots.nix -A node --out-link .gc-roots/node
-      - name: Paint the page
+      # check.sh rather than a hand-rolled invocation: the out-link paths and
+      # PLAYWRIGHT_BROWSERS_PATH are already its business, and repeating them
+      # lets CI and a local run drift apart. A phase whose toolchain is missing
+      # fails the run instead of skipping, so a bootstrap that half-worked
+      # cannot report success.
+      - name: Type check, unit tests, painted page
         env:
           BROWSERS: ${{ matrix.browsers }}
-        run: |
-          export PATH="$PWD/.gc-roots/node/bin:$PATH"
-          export PLAYWRIGHT_BROWSERS_PATH="$PWD/.gc-roots/browsers"
-          node tests/browser.test.mjs
+        run: nix-shell shell.nix --run ./check.sh
