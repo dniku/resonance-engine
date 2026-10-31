@@ -262,12 +262,10 @@ tests/engine.test.js` prints `# tests 1` for the 41 tests that file declares --
 so CI would count 4 where Deno counts 65 and stay green if 60 disappeared. And
 it does not treat a missing golden as a recording opportunity; see below.
 
-**CI has not run for this commit**: it was added after the last push, so its
-first execution is the push that lands it. Actions runners have never painted
-these pages, which means the goldens are recorded on this machine and compared
-on somebody else's. That is the known open risk; `PIXEL_TOLERANCE` exists for
-exactly this, and a runner that legitimately renders differently should raise
-the tolerance rather than the baselines.
+**CI runs green for both engines** (run 41221801727: 65 unit tests and 49/50
+browser checks each, the one skip being audio for want of an output device).
+Getting there disproved three things this README used to assert; see
+[Absent goldens and other silent passes](#absent-goldens-and-other-silent-passes).
 
 ### Golden screenshots
 
@@ -369,11 +367,12 @@ gesture.
   verified; audible output is **not**.
 - **Untested expectation:** that sound is correct and pleasant on real hardware,
   and that it mixes sensibly with the field's own output at high voice counts.
-- **Not verified: the rawgithack preview URL.** No network in this sandbox, so the
-  proxy was never fetched and its digest never compared against `index.html`. The URL is
-  constructed from the Flux Pond mechanism (`raw.githack.com/<owner>/<repo>/<ref>/<path>`,
-  note `master` here, not `main`); treat "Play it live" as untested until the `sha256sum`
-  comparison above is run somewhere with a network.
+- **Verified: the rawgithack preview serves this exact file.** Fetched over the network
+  and compared: `sha256sum` of the proxied page equals `index.html` byte for byte
+  (`4a9e99e9…c48c2`). The URL form is `raw.githack.com/<owner>/<repo>/<ref>/<path>`,
+  with `master` rather than `main`. What has *not* been checked is that it plays correctly
+  in a real browser through that proxy — the digest proves the bytes arrive, not that
+  audio starts behind the notice interstitial.
 
 - **Observed on phone viewports** (390×844 and 844×390, `hasTouch`/`isMobile`,
   Firefox): zero page errors; the field is never a sliver (368×373 portrait,
@@ -426,6 +425,65 @@ gesture.
   octave count), and that Local order actually rises with coupling *in the DOM*
   — the only surface a visitor sees, and the claim the readout exists to make.
 
+## Absent goldens and other silent passes
+
+Six ways this project reported success without checking anything. All were found
+by trying to make a test fail, and four of them were introduced *while fixing one
+of the others* — which is the actual lesson here, not any individual bug.
+
+- **A missing golden re-recorded itself.** An absent baseline was treated the same
+  as "recording was requested": the suite drew a new image, reported `skip`, and
+  exited 0. Moving a golden aside printed `skip golden: locked (baseline)` and
+  passed. An absent baseline is now an error.
+- **Recorded engines nobody compared.** The engines to compare were hard-coded to
+  Firefox. After Chromium's six baselines were committed, `BROWSERS=chromium`
+  reported six "no baselines" skips and passed — images on disk, zero comparisons
+  running. The set is now derived from `tests/golden`.
+- **A typo in `BROWSERS` passed.** `BROWSERS=chromin` printed
+  `0/0 browser checks passed` and exited 0. Unknown engines are now fatal.
+- **Every engine failing to launch passed.** Launch failures became skips, so a
+  Playwright driver whose revision did not match its browsers produced
+  `0/0 browser checks passed`, exit 0. A run that checked nothing now fails and
+  says what to look at.
+- **`UPDATE=<pose>` failed the thing it had just recorded.** `assertGolden`
+  returned `created: !exists`, conflating "new file" with "asked to record", so
+  updating an existing baseline fell through and compared a ratio that was never
+  computed — `differs in NaN% of pixels`, on a run that had just succeeded.
+- **`check.sh` said `ALL CHECKS PASSED` having run nothing.** With Deno off `PATH`
+  and the browser out-links absent, every phase skipped, nothing set the failure
+  flag, and the script exited 0. Phases that cannot run now fail. Deno and
+  esbuild were also resolved from `/nix/store` paths that existed only on the
+  machine that wrote them.
+
+A seventh is a coverage hole rather than a false pass: the phone goldens capture
+the whole page, and on a handset the intro overlay fills it — so the **canvas was
+never compared at any phone size**. Found by looking at the recorded images, not
+at the diffs, which were green throughout. `phone-<orientation>-field` closes it;
+it was verified non-vacuous by painting white over the field, which fails all six
+field poses.
+
+Two claims in this README and its tests were also stronger than their code:
+
+- "The Root select is never blank" asserted a DOM value and a bounding box while
+  claiming to guard visually *in pixels* — it built an off-screen canvas and never
+  read it. A select hidden with `visibility: hidden` passed. It now screenshots
+  the element's box and requires ink; verified that mutation fails.
+- The audio check "verifies playback produces sound". It has never asserted that
+  on any engine or runner tried. Firefox headless leaves the context suspended;
+  Chromium with no output device reports `running` while rendering exact digital
+  silence with zero voices. Both are now skips that report what they measured.
+  **Sound has never been observed.** Graph construction and voice scheduling are
+  asserted, and the peak assertion still fires if voices exist but the bus is
+  silent.
+
+The one genuinely cross-engine finding was the control panel golden differing ~5%
+between this machine and a runner while every canvas pose matched byte for byte.
+Root cause was in the app, not the test: `input[type="range"]` set `accent-color`
+but never `appearance: none`, so each browser drew its own native thumb — the only
+part of the panel the project did not control. Re-recording onto whichever machine
+was failing was tried first and simply moved the failure to the other one; styling
+the control fixed it properly.
+
 ## A methodology trap worth knowing
 
 The browser suite serves `index.html` **from disk**. So after editing `src/`
@@ -456,10 +514,11 @@ behaviour instead of passing on the old.
   verified second engine rather than an aspirational one. Firefox remains the
   engine `./check.sh` runs by default because that is the one that needs no
   escalation.
-- Both engines' goldens were recorded and compared on this machine. They have
-  never been painted by a different GPU, font stack, or by an Actions runner at
-  all, which is the difference between "deterministic here" and "portable". The
-  2% tolerance is the hedge; it has not been tested against reality.
+- Goldens were **recorded** on one machine and are **compared** on another, which
+  is the only honest way to describe them. The runner reproduces every canvas
+  pose byte for byte; text differs along glyph edges, which is why the one
+  text-dominated pose (`chrome`) carries a wider allowance than the 2% used
+  elsewhere. Do not read a green CI as "renders identically everywhere".
 - Coupling is nearest-neighbour on a 2-torus, so the field organises into waves
   rather than the near-1.0 global locking of an all-to-all network. That is the
   physics, not a shortfall; the tests assert against the disordered baseline.
