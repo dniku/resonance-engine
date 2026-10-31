@@ -155,6 +155,13 @@ async function freezePose(page, pose) {
 /** Compare a screenshot against its golden image, regenerating on demand. */
 async function assertGolden(page, name, options) {
   const shot = await page.screenshot({ ...options, animations: 'disabled' });
+  // Keep what was painted whenever a comparison is being made, so a mismatch on
+  // another machine can be inspected rather than merely counted. Written under
+  // .tmp, which is gitignored.
+  if (!shouldUpdate(name)) {
+    mkdirSync(`${PROJECT_ROOT}.tmp/painted`, { recursive: true });
+    writeFileSync(`${PROJECT_ROOT}.tmp/painted/${name}.png`, shot);
+  }
   const goldenPath = `${GOLDEN_DIR}${name}.png`;
   const exists = existsSync(goldenPath);
   const recorded = shouldUpdate(name);

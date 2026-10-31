@@ -78,3 +78,14 @@ jobs:
         env:
           BROWSERS: ${{ matrix.browsers }}
         run: nix-shell shell.nix --run ./check.sh
+      # A runner paints pixels this machine did not, and a percentage mismatch is
+      # unreadable without seeing what it drew. Only on failure, so a green run
+      # uploads nothing.
+      - name: Upload what the runner painted
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: painted-${{ matrix.browsers }}
+          path: .tmp/painted
+          if-no-files-found: ignore
+          retention-days: 7
