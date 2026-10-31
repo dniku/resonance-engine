@@ -36,16 +36,22 @@ jobs:
         browsers: [firefox, chromium]
     env:
       # gcroots.nix and shell.nix both say `import <nixpkgs>`, and a runner has
-      # no Nix channel, so NIX_PATH is empty and every nix-build dies with
-      # "file 'nixpkgs' was not found in the Nix search path" -- which is exactly
-      # how the first two runs of this workflow failed, on both engines, in the
-      # bootstrap step. Set as plain environment rather than an action input
-      # because it then works identically for nix-build and nix-shell, and does
-      # not depend on an input name that cannot be checked offline.
+      # no Nix channel, so every nix-build dies with "file 'nixpkgs' was not
+      # found in the Nix search path" -- how the first three runs of this
+      # workflow failed, on both engines, in the bootstrap step.
       #
-      # The revision is the one Flux Pond's flake.lock pins, so the two projects
-      # share a binary cache and a browser instead of drifting.
-      NIX_PATH: nixpkgs=github:NixOS/nixpkgs/5e867b1db0f219e0e906574cca1175f421a87834
+      # A `github:` URL does NOT work here, which is the non-obvious part: ':'
+      # separates entries in NIX_PATH, so Nix reads `github:NixOS/nixpkgs/REV`
+      # as two missing paths and warns twice before failing the same way. Observed
+      # verbatim:
+      #   warning: Nix search path entry 'github' does not exist, ignoring
+      #   warning: Nix search path entry 'NixOS/nixpkgs/5e867b1d...' does not exist
+      # A percent-encoded colon is no better. The tarball URL contains no colon,
+      # so it survives the split -- verified locally against this exact revision.
+      #
+      # Revision is the one Flux Pond's flake.lock pins, so the projects share a
+      # binary cache and a browser rather than drifting.
+      NIX_PATH: nixpkgs=https://github.com/NixOS/nixpkgs/archive/5e867b1db0f219e0e906574cca1175f421a87834.tar.gz
     steps:
       - uses: actions/checkout@v4
       # Pinned by commit, the way Flux Pond pins it, so a floating tag cannot
