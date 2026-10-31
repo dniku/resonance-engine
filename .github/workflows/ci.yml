@@ -34,9 +34,23 @@ jobs:
       fail-fast: false
       matrix:
         browsers: [firefox, chromium]
+    env:
+      # gcroots.nix and shell.nix both say `import <nixpkgs>`, and a runner has
+      # no Nix channel, so NIX_PATH is empty and every nix-build dies with
+      # "file 'nixpkgs' was not found in the Nix search path" -- which is exactly
+      # how the first two runs of this workflow failed, on both engines, in the
+      # bootstrap step. Set as plain environment rather than an action input
+      # because it then works identically for nix-build and nix-shell, and does
+      # not depend on an input name that cannot be checked offline.
+      #
+      # The revision is the one Flux Pond's flake.lock pins, so the two projects
+      # share a binary cache and a browser instead of drifting.
+      NIX_PATH: nixpkgs=github:NixOS/nixpkgs/5e867b1db0f219e0e906574cca1175f421a87834
     steps:
       - uses: actions/checkout@v4
-      - uses: cachix/install-nix-action@v30
+      # Pinned by commit, the way Flux Pond pins it, so a floating tag cannot
+      # break the build underneath a green badge.
+      - uses: cachix/install-nix-action@448cde739abec1eaf0646249e3d25bb8d9bc7702 # v31.11.2
       - name: Bootstrap the browser out-links check.sh looks for
         run: |
           mkdir -p .gc-roots
