@@ -792,6 +792,49 @@ try {
     }
 
     /*
+     * The field as it paints on a phone. The full-page phone images above are
+     * the layout a visitor meets, intro overlay included -- correct to pin, but
+     * they are dominated by that overlay, which on a 390x844 handset covers the
+     * entire viewport. So the canvas underneath was never compared at any phone
+     * size, and a field that painted black, or not at all, passed both baselines
+     * unnoticed. This clips to the canvas with the overlay dismissed, which is
+     * the desktop poses' coverage, extended to handsets.
+     */
+    for (const [label, options] of [['portrait', PHONE_PORTRAIT], ['landscape', PHONE_LANDSCAPE]]) {
+      await goldenCheck(GOLDEN_ENGINES.has(name), `golden: phone ${label} field (canvas, not overlay)`, async () => {
+        const { page: fresh, context: freshContext } = await openPage(browser, options);
+        openedContexts.push(freshContext);
+        await fresh.waitForFunction(() => window.__resonance !== undefined, null, { timeout: 5000 });
+        // Dismissed here, deliberately, so the image is the simulation rather
+        // than the panel covering it. The full-page capture keeps the overlay.
+        await fresh.evaluate(() => document.getElementById('intro').hidden = true);
+        await freezePose(fresh, 'idle');
+        const clip = await fresh.locator('#field').boundingBox();
+        assert.ok(clip.width > 0 && clip.height > 0, `the phone ${label} canvas has no area to compare`);
+        const result = await assertGolden(fresh, `${name}-phone-${label}-field`, { clip });
+        requireGolden(result, `phone-${label}-field`);
+        if (result.recorded) {
+          report(`golden: phone ${label} field (recorded)`, 'skip', 'named in UPDATE; written, not compared');
+          return;
+        }
+        assert.ok(
+          result.ratio <= PIXEL_TOLERANCE,
+          `phone ${label} field differs from its golden image in ${(result.ratio * 100).toFixed(2)}% of pixels`,
+        );
+        // A canvas that is one flat colour has nothing to pin: prove it carries
+        // the field before trusting the comparison above.
+        const spread = await fresh.evaluate(() => {
+          const c = document.getElementById('field');
+          const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+          const seen = new Set();
+          for (let i = 0; i < d.length; i += 4) seen.add((d[i] << 16) | (d[i + 1] << 8) | d[i + 2]);
+          return seen.size;
+        });
+        assert.ok(spread > 8, `the phone ${label} canvas holds only ${spread} colours, so it is not painting`);
+      });
+    }
+
+    /*
      * The accessibility contract, asserted on the built single file rather than
      * the template, because that is the artifact that ships and the one a screen
      * reader actually opens.
